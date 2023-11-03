@@ -55,53 +55,6 @@ void error_loop() {
   }
 }
 
-static uint8_t buffer[VL53L1X_I2C_BUF_SIZE + 2];
-
-int8_t i2c_init(uint16_t addr, i2c_inst_t* i2c_device) {
-  _i2c_init(i2c_device, VL53L1X_I2C_BAUDRATE);
-  gpio_set_function(4, GPIO_FUNC_I2C);
-  gpio_set_function(5, GPIO_FUNC_I2C);
-  gpio_pull_up(4);
-  gpio_pull_up(5);
-
-  std_msgs__msg__Int32 single_msg;
-  uint16_t sensorId;
-  int8_t status = 0;
-
-  { // VL53L1X_GetSensorId -> VL53L1X_RdWord -> VL53L1X_ReadMulti
-    buffer[0] = VL53L1X_IDENTIFICATION__MODEL_ID >> 8;
-    buffer[1] = VL53L1X_IDENTIFICATION__MODEL_ID & 0xFF;
-
-    /*for (uint8_t i = 0 ; i < 255 ; i++) {
-      status = (i2c_write_blocking(i2c_device, i, buffer, 2, false) == 2) - 1;
-      single_msg.data = status;
-      RCSOFTCHECK(rcl_publish(&distances_publisher, &single_msg, NULL));
-    }*/
-
-    int wrote = i2c_write_blocking(i2c_device, addr, buffer, 2, false);
-    status = (wrote == 2) - 1;
-    
-    single_msg.data = wrote;
-    RCSOFTCHECK(rcl_publish(&distances_publisher, &single_msg, NULL));
-
-    if (!status) {
-      ((uint8_t*)&sensorId)[0] = VL53L1X_IDENTIFICATION__MODEL_ID;
-      status = (i2c_read_blocking(i2c_device, addr, (uint8_t*)&sensorId, 2, false) == 2) - 1;
-    }
-
-    sensorId = ntohs(sensorId);
-
-    single_msg.data = sensorId;
-    RCSOFTCHECK(rcl_publish(&distances_publisher, &single_msg, NULL));
-  }
-    
-  if (sensorId != VL53L1X_SENSOR_ID) { // Bad connection, wrong chip, etc
-    return -1;
-  }
-
-  return status;
-}
-
 uint8_t init_tof_parameters(uint16_t tof_dev) {
   // Initialize and configure sensor
   VL53L1X_SensorInit(tof_dev);
@@ -116,7 +69,7 @@ uint8_t init_tof_parameters(uint16_t tof_dev) {
   } while(dataReady == 0);
   VL53L1X_GetResult(tof_dev, &results);
   
-  // 2 clear interrupt when start ranging (why ?)
+  // 2 clear interrupt when start ranging
   VL53L1X_ClearInterrupt(tof_dev);
   VL53L1X_ClearInterrupt(tof_dev);
 
@@ -210,17 +163,10 @@ uint32_t init_tof() {
   // create executor
   RCCHECK(rclc_executor_init(&executor, &support.context, 2, &allocator));
 
-  std_msgs__msg__Int32 single_msg;
-  single_msg.data = 5;
-  RCSOFTCHECK(rcl_publish(&distances_publisher, &single_msg, NULL));
-
   msg = std_msgs__msg__Int32__Sequence__create(tof_count);
   if (msg == nullptr) {
     return uint32_t(0x80000000); // first bit set
   }
-
-  single_msg.data = 6;
-  RCSOFTCHECK(rcl_publish(&distances_publisher, &single_msg, NULL));
 
   /*// I2C init
   _i2c_init(i2c0, 5000);
@@ -290,56 +236,24 @@ uint32_t init_tof() {
   init_tof_parameters(I2C_DEV_ADDR_RIGHT);*/
 
 
-
-  single_msg.data = 7;
-  RCSOFTCHECK(rcl_publish(&distances_publisher, &single_msg, NULL));
-
-  /*if (VL53L1X_I2C_Init(I2C_DEV_ADDR, i2c0) < 0) {
-    digitalWrite(LED_BUILTIN, LOW); 
+  if (VL53L1X_I2C_Init(I2C_DEV_ADDR, i2c0) < 0) {
     return TofInit::Failed;
-  }*/
-
-  single_msg.data = VL53L1X_I2C_Init(I2C_DEV_ADDR, i2c0);//i2c_init(I2C_DEV_ADDR, i2c0); 
-  RCSOFTCHECK(rcl_publish(&distances_publisher, &single_msg, NULL));
+  }
 
   // Ensure the sensor has booted
   uint8_t sensorState;
   do {
-    single_msg.data = 11;
-    RCSOFTCHECK(rcl_publish(&distances_publisher, &single_msg, NULL));
     status = VL53L1X_BootState(I2C_DEV_ADDR, &sensorState);
-    /*{
-      //VL53L1X_RdByte(I2C_DEV_ADDR, VL53L1X_FIRMWARE__SYSTEM_STATUS, &sensorState)
-      //VL53L1X_ReadMulti(I2C_DEV_ADDR, VL53L1X_FIRMWARE__SYSTEM_STATUS, &sensorState, 1);
-      buffer[0] = VL53L1X_FIRMWARE__SYSTEM_STATUS >> 8;
-      buffer[1] = VL53L1X_FIRMWARE__SYSTEM_STATUS & 0xFF;
-
-      //status = Pico_I2CWrite(I2C_DEV_ADDR, buffer, 2);
-      status = (i2c_write_blocking(i2c0, I2C_DEV_ADDR, buffer, 2, false) == 2) - 1;
-      if (!status) {
-        (&sensorState)[0] = VL53L1X_FIRMWARE__SYSTEM_STATUS;
-        //status = Pico_I2CRead(I2C_DEV_ADDR, &sensorState, 1);
-        status = (i2c_read_blocking(i2c0, I2C_DEV_ADDR, &sensorState, 1, false) == 1) - 1;
-      }
-    }*/
-    single_msg.data = 666;
-    RCSOFTCHECK(rcl_publish(&distances_publisher, &single_msg, NULL));
     sleep_ms(2);
   } while (sensorState == 0);
-
-
-  single_msg.data = 9;
-  RCSOFTCHECK(rcl_publish(&distances_publisher, &single_msg, NULL));
 
   // Initialize and configure sensor
   init_tof_parameters(I2C_DEV_ADDR);
 
 
-  single_msg.data = 10;
-  RCSOFTCHECK(rcl_publish(&distances_publisher, &single_msg, NULL));
-
   RCCHECK(rclc_executor_add_timer(&executor, &timer));
   RCCHECK(rclc_executor_spin(&executor));
+  
 
   return TofInit::Ok;
 }
